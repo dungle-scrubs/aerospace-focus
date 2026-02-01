@@ -1,0 +1,126 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release binary
+        run: swift build -c release --arch ${{ matrix.arch }}
+
+      - name: Create tarball
+        run: |
+          mkdir -p dist
+          cp .build/${{ matrix.arch }}-apple-macosx/release/aerospace-focus dist/
+          tar -czvf aerospace-focus-${{ github.ref_name }}-darwin-${{ matrix.arch }}.tar.gz -C dist aerospace-focus
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aerospace-focus-darwin-${{ matrix.arch }}
+          path: aerospace-focus-${{ github.ref_name }}-darwin-${{ matrix.arch }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          ARM_SHA=$(shasum -a 256 aerospace-focus-darwin-arm64/aerospace-focus-${{ github.ref_name }}-darwin-arm64.tar.gz | cut -d' ' -f1)
+          X86_SHA=$(shasum -a 256 aerospace-focus-darwin-x86_64/aerospace-focus-${{ github.ref_name }}-darwin-x86_64.tar.gz | cut -d' ' -f1)
+          echo "arm64_sha=$ARM_SHA" >> $GITHUB_OUTPUT
+          echo "x86_64_sha=$X86_SHA" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            aerospace-focus-darwin-arm64/aerospace-focus-${{ github.ref_name }}-darwin-arm64.tar.gz
+            aerospace-focus-darwin-x86_64/aerospace-focus-${{ github.ref_name }}-darwin-x86_64.tar.gz
+          body: |
+            ## Installation
+
+            ### Homebrew (recommended)
+
+            ```bash
+            brew install dungle-scrubs/aerospace-focus/aerospace-focus
+            brew services start aerospace-focus
+            ```
+
+            ### Manual download
+
+            **Apple Silicon (M1/M2/M3/M4):**
+            ```bash
+            curl -L https://github.com/dungle-scrubs/aerospace-focus/releases/download/${{ github.ref_name }}/aerospace-focus-${{ github.ref_name }}-darwin-arm64.tar.gz | tar xz
+            mv aerospace-focus /usr/local/bin/
+            ```
+
+            **Intel:**
+            ```bash
+            curl -L https://github.com/dungle-scrubs/aerospace-focus/releases/download/${{ github.ref_name }}/aerospace-focus-${{ github.ref_name }}-darwin-x86_64.tar.gz | tar xz
+            mv aerospace-focus /usr/local/bin/
+            ```
+
+            ## Checksums
+
+            | Architecture | SHA256 |
+            |--------------|--------|
+            | arm64 | `${{ steps.sha.outputs.arm64_sha }}` |
+            | x86_64 | `${{ steps.sha.outputs.x86_64_sha }}` |
+
+            ## Aerospace Integration
+
+            Add to your `~/.config/aerospace/aerospace.toml`:
+
+            ```toml
+            after-startup-command = [
+                'exec-and-forget aerospace-focus daemon'
+            ]
+
+            on-focus-changed = ['exec-and-forget aerospace-focus update']
+            ```
+
+  update-formula:
+    needs: release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download source tarball and calculate SHA
+        run: |
+          curl -L -o release.tar.gz "https://github.com/dungle-scrubs/aerospace-focus/archive/refs/tags/${{ github.ref_name }}.tar.gz"
+          SHA=$(shasum -a 256 release.tar.gz | cut -d' ' -f1)
+          echo "SHA256=$SHA" >> $GITHUB_ENV
+
+      - name: Update formula
+        run: |
+          sed -i '' "s/sha256 \".*\"/sha256 \"$SHA256\"/" Formula/aerospace-focus.rb
+          sed -i '' "s|/v[0-9]*\.[0-9]*\.[0-9]*.tar.gz|/${{ github.ref_name }}.tar.gz|g" Formula/aerospace-focus.rb
+
+      - name: Commit formula update
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add Formula/aerospace-focus.rb
+          git diff --staged --quiet || git commit -m "Update formula for ${{ github.ref_name }}"
+          git push origin main
