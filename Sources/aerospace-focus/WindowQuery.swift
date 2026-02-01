@@ -25,11 +25,31 @@ class WindowQuery {
         return getFrontmostWindowFrame()
     }
     
+    /// Find aerospace binary
+    private static func findAerospaceBinary() -> String? {
+        let paths = [
+            "/opt/homebrew/bin/aerospace",  // Apple Silicon Homebrew
+            "/usr/local/bin/aerospace",      // Intel Homebrew
+            "/run/current-system/sw/bin/aerospace"  // Nix
+        ]
+        for path in paths {
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+        return nil
+    }
+    
     /// Get window info via Aerospace CLI
     private static func getAerospaceWindow() -> (frame: CGRect, appName: String)? {
+        guard let aerospacePath = findAerospaceBinary() else {
+            log("Aerospace binary not found")
+            return nil
+        }
+        
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["aerospace", "list-windows", "--focused", "--format", "%{window-id}|%{app-name}"]
+        process.executableURL = URL(fileURLWithPath: aerospacePath)
+        process.arguments = ["list-windows", "--focused", "--format", "%{window-id}|%{app-name}"]
         
         let pipe = Pipe()
         process.standardOutput = pipe
