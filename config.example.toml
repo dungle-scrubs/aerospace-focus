@@ -1,0 +1,27 @@
+# Aerospace Focus Bar Configuration
+
+# Bar appearance
+# bar_height = 4           # Uncomment to override auto-sizing
+bar_color = "#00ff00"      # Green
+bar_opacity = 1.0
+
+# Auto-size bar from aerospace gaps config (default: true)
+# When enabled, bar height is read from ~/.config/aerospace/aerospace.toml
+# Uses inner.vertical gap when window has neighbors, outer.bottom when at screen edge
+auto_size_from_aerospace = true
+
+# Position: "bottom", "top", "left", "right"
+position = "bottom"
+
+# Offset from window edge (0 = flush against window)
+offset = 0
+
+# Only show for specific apps (empty = all apps)
+include_apps = []
+
+# Never show for these apps
+exclude_apps = ["Finder", "Spotlight"]
+
+# Animation
+animate = false
+animation_duration = 0.1
