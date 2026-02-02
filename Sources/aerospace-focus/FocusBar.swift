@@ -184,15 +184,19 @@ class FocusBar {
     
     /// Update the bar for the currently focused window
     func update() {
-        guard let (frame, appName) = WindowQuery.getFocusedWindowFrame() else {
+        guard let windowInfo = WindowQuery.getFocusedWindowInfo() else {
             log("No focused window found")
             hide()
             return
         }
         
-        // Check if app should show bar
-        if !config.config.shouldShowForApp(appName) {
-            log("App '\(appName)' is excluded")
+        let frame = windowInfo.frame
+        let appName = windowInfo.appName
+        let bundleId = windowInfo.bundleId
+        
+        // Check if app should show bar (includes auto-exclude for floating apps)
+        if !config.config.shouldShowForApp(appName, bundleId: bundleId, floatingRules: config.floatingRules) {
+            log("App '\(appName)' (\(bundleId ?? "no-bundle-id")) is excluded")
             hide()
             return
         }
