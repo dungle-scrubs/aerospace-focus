@@ -20,7 +20,11 @@ offset = 0
 include_apps = []
 
 # Never show for these apps
-exclude_apps = ["Finder", "Spotlight"]
+exclude_apps = ["Spotlight"]
+
+# Auto-exclude apps with 'layout floating' rules in aerospace config (default: true)
+# Parses [[on-window-detected]] rules from ~/.config/aerospace/aerospace.toml
+auto_exclude_floating = true
 
 # Animation
 animate = false
