@@ -1,8 +1,8 @@
 class AerospaceFocus < Formula
   desc "Focus indicator bar for AeroSpace window manager"
   homepage "https://github.com/dungle-scrubs/aerospace-focus"
-  url "https://github.com/dungle-scrubs/aerospace-focus/archive/refs/tags/v0.1.1.tar.gz"
-  sha256 "ccb5ff63b30a707ad863848c133f01405a187ddde366c6e2532ff1af8a1f520a"
+  url "https://github.com/dungle-scrubs/aerospace-focus/archive/refs/tags/v0.1.2.tar.gz"
+  sha256 "f287be0e60dd0f3429100581f3d2da76756ba89b621a569586c4ea1e0398c791"
   license "MIT"
 
   depends_on :macos
