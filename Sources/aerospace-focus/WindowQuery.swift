@@ -10,19 +10,36 @@ struct WindowInfo {
     let layer: Int
 }
 
+/// Result of focused window query
+struct FocusedWindowInfo {
+    let frame: CGRect
+    let appName: String
+    let bundleId: String?
+}
+
 /// Query window information using CoreGraphics
 class WindowQuery {
     
     /// Get the focused window's frame
     /// Uses Aerospace CLI to get the window ID, then CGWindowListCopyWindowInfo for the frame
     static func getFocusedWindowFrame() -> (frame: CGRect, appName: String)? {
+        if let info = getFocusedWindowInfo() {
+            return (info.frame, info.appName)
+        }
+        return nil
+    }
+    
+    /// Get full focused window info including bundle ID
+    static func getFocusedWindowInfo() -> FocusedWindowInfo? {
         // First try Aerospace CLI
         if let info = getAerospaceWindow() {
-            return info
+            // Get bundle ID from frontmost app (aerospace doesn't provide it)
+            let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            return FocusedWindowInfo(frame: info.frame, appName: info.appName, bundleId: bundleId)
         }
         
         // Fallback to frontmost application's focused window
-        return getFrontmostWindowFrame()
+        return getFrontmostWindowInfo()
     }
     
     /// Find aerospace binary
@@ -137,11 +154,20 @@ class WindowQuery {
     
     /// Fallback: Get frontmost application's window frame using Accessibility API
     private static func getFrontmostWindowFrame() -> (frame: CGRect, appName: String)? {
+        if let info = getFrontmostWindowInfo() {
+            return (info.frame, info.appName)
+        }
+        return nil
+    }
+    
+    /// Fallback: Get frontmost application's window info using Accessibility API
+    private static func getFrontmostWindowInfo() -> FocusedWindowInfo? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
             return nil
         }
         
         let appName = frontApp.localizedName ?? "Unknown"
+        let bundleId = frontApp.bundleIdentifier
         let pid = frontApp.processIdentifier
         
         let axApp = AXUIElementCreateApplication(pid)
@@ -177,7 +203,7 @@ class WindowQuery {
         let cgRect = CGRect(origin: position, size: size)
         let frame = convertToScreenCoordinates(cgRect)
         
-        return (frame, appName)
+        return FocusedWindowInfo(frame: frame, appName: appName, bundleId: bundleId)
     }
     
     /// Check if a window is in fullscreen mode
