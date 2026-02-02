@@ -206,6 +206,40 @@ class WindowQuery {
         return FocusedWindowInfo(frame: frame, appName: appName, bundleId: bundleId)
     }
     
+    /// Count windows on the focused workspace
+    static func getWorkspaceWindowCount() -> Int {
+        guard let aerospacePath = findAerospaceBinary() else {
+            return 0
+        }
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: aerospacePath)
+        process.arguments = ["list-windows", "--workspace", "focused", "--format", "%{window-id}"]
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            guard process.terminationStatus == 0 else { return 0 }
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !output.isEmpty else {
+                return 0
+            }
+            
+            // Count non-empty lines
+            return output.components(separatedBy: .newlines).filter { !$0.isEmpty }.count
+        } catch {
+            log("Aerospace window count failed: \(error)")
+            return 0
+        }
+    }
+    
     /// Check if a window is in fullscreen mode
     static func isWindowFullscreen(_ frame: CGRect) -> Bool {
         for screen in NSScreen.screens {
