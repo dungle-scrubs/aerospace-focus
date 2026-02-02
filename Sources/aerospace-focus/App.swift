@@ -10,6 +10,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastKnownApp: String?
     private var geometryCheckTimer: Timer?
     
+    // Mission Control state - pause updates during Exposé
+    private var isMissionControlActive = false
+    
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("Daemon starting...")
         
@@ -56,6 +59,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // This handles cases like closing a window where on-focus-changed doesn't fire
         startGeometryCheck()
         
+        // Listen for Mission Control activation/deactivation
+        setupMissionControlObservers()
+        
         log("Daemon ready")
     }
     
@@ -66,8 +72,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    /// Set up observers for Mission Control (Exposé) activation
+    private func setupMissionControlObservers() {
+        let dnc = DistributedNotificationCenter.default()
+        
+        // Mission Control activating - hide bar and pause updates
+        dnc.addObserver(
+            self,
+            selector: #selector(missionControlActivated),
+            name: NSNotification.Name("com.apple.exposé.willActivate"),
+            object: nil
+        )
+        
+        // Mission Control deactivating - restore bar after windows settle
+        dnc.addObserver(
+            self,
+            selector: #selector(missionControlDeactivated),
+            name: NSNotification.Name("com.apple.exposé.didDeactivate"),
+            object: nil
+        )
+        
+        log("Mission Control observers registered")
+    }
+    
+    @objc private func missionControlActivated(_ notification: Notification) {
+        log("Mission Control activated - hiding bar")
+        isMissionControlActive = true
+        focusBar.hide()
+    }
+    
+    @objc private func missionControlDeactivated(_ notification: Notification) {
+        log("Mission Control deactivated - restoring bar")
+        isMissionControlActive = false
+        
+        // Delay update to let windows settle to their final positions
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self, !self.isMissionControlActive else { return }
+            self.focusBar.update()
+            self.updateLastKnownGeometry()
+        }
+    }
+    
     /// Check if focused window geometry changed and update if needed
     private func checkGeometryChange() {
+        // Skip updates during Mission Control
+        guard !isMissionControlActive else { return }
+        
         guard let info = WindowQuery.getFocusedWindowInfo() else {
             // No focused window - if we had one before, update (will hide bar)
             if lastKnownFrame != nil {
@@ -103,6 +153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         log("Daemon shutting down...")
         geometryCheckTimer?.invalidate()
         geometryCheckTimer = nil
+        DistributedNotificationCenter.default().removeObserver(self)
         server.stop()
         focusBar.hide()
     }
