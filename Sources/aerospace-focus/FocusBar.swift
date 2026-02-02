@@ -208,6 +208,14 @@ class FocusBar {
             return
         }
         
+        // Only show focus bar if there are multiple windows on the workspace
+        let windowCount = WindowQuery.getWorkspaceWindowCount()
+        if windowCount <= 1 {
+            log("Only \(windowCount) window(s) on workspace, hiding bar")
+            hide()
+            return
+        }
+        
         log("Showing bar for '\(appName)' at \(frame)")
         positionBar(relativeTo: frame)
     }
