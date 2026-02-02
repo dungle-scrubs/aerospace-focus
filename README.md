@@ -83,7 +83,11 @@ auto_size_from_aerospace = true
 position = "bottom"
 
 # Apps to exclude
-exclude_apps = ["Finder", "Spotlight"]
+exclude_apps = ["Spotlight"]
+
+# Auto-exclude floating apps from aerospace config (default: true)
+# Reads [[on-window-detected]] rules with 'layout floating'
+auto_exclude_floating = true
 ```
 
 ## Commands
