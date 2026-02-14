@@ -74,9 +74,11 @@ class FocusBar {
     
     /// Position the bar relative to the focused window
     func positionBar(relativeTo windowFrame: CGRect) {
-        guard let bar = barWindow else {
+        if barWindow == nil {
             createBar()
-            positionBar(relativeTo: windowFrame)
+        }
+        guard let bar = barWindow else {
+            log("Failed to create bar window")
             return
         }
         
@@ -129,7 +131,7 @@ class FocusBar {
         
         if cfg.animate && bar.isVisible {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = cfg.animationDuration
+                context.duration = max(0.01, min(1.0, cfg.animationDuration))
                 bar.animator().setFrame(clampedFrame, display: true)
             }
         } else {
@@ -142,6 +144,7 @@ class FocusBar {
     /// Clamp bar frame to stay visible on screen
     private func clampToScreen(_ barFrame: NSRect, windowFrame: CGRect) -> NSRect {
         guard let screen = WindowQuery.screenContaining(windowFrame) else {
+            log("Screen not found for window frame, using unclamped position")
             return barFrame
         }
         
