@@ -1,31 +1,53 @@
 # Aerospace Focus Bar Configuration
+# Place at: ~/.config/aerospace-focus/config.toml
 
-# Bar appearance
-# bar_height = 4           # Uncomment to override auto-sizing
-bar_color = "#00ff00"      # Green
+# ─── Bar Appearance ──────────────────────────────────────────────
+
+# Bar height in pixels. Leave commented for auto-sizing from aerospace gaps.
+# bar_height = 4
+
+# Bar color in hex format
+bar_color = "#00ff00"
+
+# Bar opacity (0.0 = transparent, 1.0 = opaque)
 bar_opacity = 1.0
 
-# Auto-size bar from aerospace gaps config (default: true)
-# When enabled, bar height is read from ~/.config/aerospace/aerospace.toml
-# Uses inner.vertical gap when window has neighbors, outer.bottom when at screen edge
+# ─── Auto-Sizing ─────────────────────────────────────────────────
+
+# Auto-size bar from aerospace gap config (default: true)
+# Reads gap values from ~/.config/aerospace/aerospace.toml
+#
+# For position="bottom":
+#   - Between windows: uses inner.vertical gap
+#   - At screen edge: uses outer.bottom gap
+# For position="top": inner.vertical or outer.top
+# For position="left"/"right": inner.horizontal or outer.left/right
 auto_size_from_aerospace = true
 
-# Position: "bottom", "top", "left", "right"
+# ─── Position ────────────────────────────────────────────────────
+
+# Bar position relative to focused window: "bottom", "top", "left", "right"
 position = "bottom"
 
-# Offset from window edge (0 = flush against window)
+# Offset from window edge in pixels (0 = flush against window)
 offset = 0
 
-# Only show for specific apps (empty = all apps)
+# ─── App Filtering ───────────────────────────────────────────────
+
+# Only show for specific apps (empty = all apps except excluded)
 include_apps = []
 
 # Never show for these apps
 exclude_apps = ["Spotlight"]
 
-# Auto-exclude apps with 'layout floating' rules in aerospace config (default: true)
-# Parses [[on-window-detected]] rules from ~/.config/aerospace/aerospace.toml
+# Auto-exclude apps with 'layout floating' rules in aerospace config
+# Parses [[on-window-detected]] rules from aerospace.toml
 auto_exclude_floating = true
 
-# Animation
+# ─── Animation ───────────────────────────────────────────────────
+
+# Animate bar position changes (disabled by default)
 animate = false
+
+# Animation duration in seconds (0.01–2.0)
 animation_duration = 0.1
