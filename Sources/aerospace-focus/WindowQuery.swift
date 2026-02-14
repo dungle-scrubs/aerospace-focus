@@ -1,15 +1,6 @@
 import Cocoa
 import CoreGraphics
 
-/// Information about a window
-struct WindowInfo {
-    let windowId: CGWindowID
-    let ownerName: String
-    let frame: CGRect
-    let isOnScreen: Bool
-    let layer: Int
-}
-
 /// Result of focused window query
 struct FocusedWindowInfo {
     let frame: CGRect
@@ -19,15 +10,7 @@ struct FocusedWindowInfo {
 
 /// Query window information using CoreGraphics
 class WindowQuery {
-    
-    /// Get the focused window's frame
-    /// Uses Aerospace CLI to get the window ID, then CGWindowListCopyWindowInfo for the frame
-    static func getFocusedWindowFrame() -> (frame: CGRect, appName: String)? {
-        if let info = getFocusedWindowInfo() {
-            return (info.frame, info.appName)
-        }
-        return nil
-    }
+    private static var cachedAerospacePath: String?
     
     /// Get full focused window info including bundle ID
     static func getFocusedWindowInfo() -> FocusedWindowInfo? {
@@ -44,6 +27,7 @@ class WindowQuery {
     
     /// Find aerospace binary
     private static func findAerospaceBinary() -> String? {
+        if let cached = cachedAerospacePath { return cached }
         let paths = [
             "/opt/homebrew/bin/aerospace",  // Apple Silicon Homebrew
             "/usr/local/bin/aerospace",      // Intel Homebrew
@@ -51,14 +35,19 @@ class WindowQuery {
         ]
         for path in paths {
             if FileManager.default.fileExists(atPath: path) {
+                cachedAerospacePath = path
                 return path
             }
         }
         return nil
     }
     
-    /// Get window info via Aerospace CLI
-    private static func getAerospaceWindow() -> (frame: CGRect, appName: String)? {
+    /// Run an aerospace CLI command with timeout
+    /// - Parameters:
+    ///   - args: Command arguments to pass to aerospace binary
+    ///   - timeout: Maximum seconds to wait (default 2.0)
+    /// - Returns: Trimmed stdout string, or nil on failure
+    private static func runAerospaceCommand(_ args: [String], timeout: TimeInterval = 2.0) -> String? {
         guard let aerospacePath = findAerospaceBinary() else {
             log("Aerospace binary not found")
             return nil
@@ -66,40 +55,58 @@ class WindowQuery {
         
         let process = Process()
         process.executableURL = URL(fileURLWithPath: aerospacePath)
-        process.arguments = ["list-windows", "--focused", "--format", "%{window-id}|%{app-name}"]
-        
+        process.arguments = args
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         
         do {
             try process.run()
-            process.waitUntilExit()
-            
-            guard process.terminationStatus == 0 else { return nil }
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !output.isEmpty else {
-                return nil
-            }
-            
-            let parts = output.split(separator: "|", maxSplits: 1)
-            guard parts.count >= 2,
-                  let windowId = UInt32(parts[0]) else {
-                return nil
-            }
-            
-            let appName = String(parts[1])
-            
-            // Get frame from CGWindowListCopyWindowInfo
-            if let frame = getWindowFrame(windowId: windowId) {
-                return (frame, appName)
-            }
         } catch {
             log("Aerospace CLI failed: \(error)")
+            return nil
         }
         
+        // Wait with timeout to prevent hanging
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            process.waitUntilExit()
+            semaphore.signal()
+        }
+        
+        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            log("Aerospace CLI timed out after \(timeout)s")
+            return nil
+        }
+        
+        guard process.terminationStatus == 0 else { return nil }
+        
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !output.isEmpty else {
+            return nil
+        }
+        return output
+    }
+    
+    /// Get window info via Aerospace CLI
+    private static func getAerospaceWindow() -> (frame: CGRect, appName: String)? {
+        guard let output = runAerospaceCommand(["list-windows", "--focused", "--format", "%{window-id}|%{app-name}"]) else {
+            return nil
+        }
+        
+        let parts = output.split(separator: "|", maxSplits: 1)
+        guard parts.count >= 2,
+              let windowId = UInt32(parts[0]) else {
+            return nil
+        }
+        
+        let appName = String(parts[1])
+        
+        if let frame = getWindowFrame(windowId: windowId) {
+            return (frame, appName)
+        }
         return nil
     }
     
@@ -124,25 +131,20 @@ class WindowQuery {
         return convertToScreenCoordinates(topLeftFrame)
     }
     
-    /// Convert from CG coordinates (top-left origin) to NS coordinates (bottom-left origin)
+    /// Convert from CG coordinates (top-left origin, global) to NS coordinates (bottom-left origin, global)
+    /// CG coordinate system: origin at top-left of primary display
+    /// NS coordinate system: origin at bottom-left of primary display
     private static func convertToScreenCoordinates(_ cgRect: CGRect) -> CGRect {
-        // Find the screen that contains most of this window
-        guard let screen = NSScreen.screens.first(where: { screen in
-            screen.frame.intersects(CGRect(
-                x: cgRect.origin.x,
-                y: screen.frame.height - cgRect.origin.y - cgRect.height,
-                width: cgRect.width,
-                height: cgRect.height
-            ))
-        }) ?? NSScreen.main else {
+        // The primary screen's height is the reference for global coordinate conversion
+        // NSScreen.screens[0] is always the primary display
+        guard let primaryScreen = NSScreen.screens.first else {
             return cgRect
         }
         
-        // Get the main screen's height for coordinate conversion
-        let mainScreenHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
+        let primaryHeight = primaryScreen.frame.height
         
-        // Convert Y coordinate: nsY = mainScreenHeight - cgY - height
-        let nsY = mainScreenHeight - cgRect.origin.y - cgRect.height
+        // Convert Y: NS_Y = primaryHeight - CG_Y - height
+        let nsY = primaryHeight - cgRect.origin.y - cgRect.height
         
         return CGRect(
             x: cgRect.origin.x,
@@ -152,16 +154,13 @@ class WindowQuery {
         )
     }
     
-    /// Fallback: Get frontmost application's window frame using Accessibility API
-    private static func getFrontmostWindowFrame() -> (frame: CGRect, appName: String)? {
-        if let info = getFrontmostWindowInfo() {
-            return (info.frame, info.appName)
-        }
-        return nil
-    }
-    
     /// Fallback: Get frontmost application's window info using Accessibility API
     private static func getFrontmostWindowInfo() -> FocusedWindowInfo? {
+        guard AXIsProcessTrusted() else {
+            log("Accessibility permissions not granted — grant in System Settings → Privacy & Security → Accessibility")
+            return nil
+        }
+        
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
             return nil
         }
@@ -179,7 +178,8 @@ class WindowQuery {
             return nil
         }
         
-        let axWindow = window as! AXUIElement
+        // CFTypeRef from Accessibility API is already AXUIElement
+        let axWindow = unsafeBitCast(window, to: AXUIElement.self)
         
         // Get position
         var positionRef: CFTypeRef?
@@ -187,7 +187,8 @@ class WindowQuery {
         
         var position = CGPoint.zero
         if let posRef = positionRef {
-            AXValueGetValue(posRef as! AXValue, .cgPoint, &position)
+            let value = unsafeBitCast(posRef, to: AXValue.self)
+            AXValueGetValue(value, .cgPoint, &position)
         }
         
         // Get size
@@ -196,7 +197,8 @@ class WindowQuery {
         
         var size = CGSize.zero
         if let sRef = sizeRef {
-            AXValueGetValue(sRef as! AXValue, .cgSize, &size)
+            let value = unsafeBitCast(sRef, to: AXValue.self)
+            AXValueGetValue(value, .cgSize, &size)
         }
         
         // Convert coordinates (Accessibility uses top-left origin)
@@ -208,44 +210,18 @@ class WindowQuery {
     
     /// Count windows on the focused workspace
     static func getWorkspaceWindowCount() -> Int {
-        guard let aerospacePath = findAerospaceBinary() else {
+        guard let output = runAerospaceCommand(["list-windows", "--workspace", "focused", "--format", "%{window-id}"]) else {
             return 0
         }
-        
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: aerospacePath)
-        process.arguments = ["list-windows", "--workspace", "focused", "--format", "%{window-id}"]
-        
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            guard process.terminationStatus == 0 else { return 0 }
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !output.isEmpty else {
-                return 0
-            }
-            
-            // Count non-empty lines
-            return output.components(separatedBy: .newlines).filter { !$0.isEmpty }.count
-        } catch {
-            log("Aerospace window count failed: \(error)")
-            return 0
-        }
+        return output.components(separatedBy: .newlines).filter { !$0.isEmpty }.count
     }
     
     /// Check if a window is in fullscreen mode
     static func isWindowFullscreen(_ frame: CGRect) -> Bool {
         for screen in NSScreen.screens {
-            // Check if window frame matches screen frame (approximately)
+            let menuBarAllowance = screen.frame.height - screen.visibleFrame.height + screen.visibleFrame.origin.y - screen.frame.origin.y
             if abs(frame.width - screen.frame.width) < 10 &&
-               abs(frame.height - screen.frame.height) < 50 { // Menu bar allowance
+               abs(frame.height - screen.frame.height) < menuBarAllowance + 10 {
                 return true
             }
         }
