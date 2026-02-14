@@ -6,7 +6,7 @@ struct AerospaceFocus: ParsableCommand {
     static var configuration = CommandConfiguration(
         commandName: "aerospace-focus",
         abstract: "A focus indicator bar for Aerospace window manager",
-        version: "0.1.4",
+        version: "0.1.4", // x-release-please-version
         subcommands: [
             Daemon.self,
             Update.self,
