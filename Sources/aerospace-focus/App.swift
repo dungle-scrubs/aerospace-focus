@@ -12,9 +12,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     // Mission Control state - pause updates during Exposé
     private var isMissionControlActive = false
+    private var missionControlActivationCount = 0
+    
+    // Timing constants
+    private let initialUpdateDelay: TimeInterval = 0.5
+    private let geometryCheckInterval: TimeInterval = 0.2
+    private let windowSettlingDelay: TimeInterval = 0.3
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("Daemon starting...")
+        
+        // Handle POSIX signals for clean shutdown
+        signal(SIGTERM) { _ in
+            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+        }
+        signal(SIGINT) { _ in
+            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+        }
+        signal(SIGHUP) { _ in
+            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+        }
         
         // Create the focus bar
         focusBar.createBar()
@@ -50,7 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         server.start()
         
         // Initial update
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + initialUpdateDelay) { [weak self] in
             self?.focusBar.update()
             self?.updateLastKnownGeometry()
         }
@@ -67,7 +84,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     /// Start periodic check for window geometry changes
     private func startGeometryCheck() {
-        geometryCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+        geometryCheckTimer = Timer.scheduledTimer(withTimeInterval: geometryCheckInterval, repeats: true) { [weak self] _ in
             self?.checkGeometryChange()
         }
     }
@@ -98,16 +115,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func missionControlActivated(_ notification: Notification) {
         log("Mission Control activated - hiding bar")
         isMissionControlActive = true
+        missionControlActivationCount += 1
+        lastKnownFrame = nil  // Force refresh after Mission Control
+        lastKnownApp = nil
         focusBar.hide()
     }
     
     @objc private func missionControlDeactivated(_ notification: Notification) {
         log("Mission Control deactivated - restoring bar")
         isMissionControlActive = false
+        let currentCount = missionControlActivationCount
         
         // Delay update to let windows settle to their final positions
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self, !self.isMissionControlActive else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + windowSettlingDelay) { [weak self] in
+            guard let self = self,
+                  currentCount == self.missionControlActivationCount else { return }
             self.focusBar.update()
             self.updateLastKnownGeometry()
         }
