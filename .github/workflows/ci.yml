@@ -1,14 +1,54 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - 'config.example.toml'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - 'config.example.toml'
 
 jobs:
   build:
     runs-on: macos-14
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache SPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-spm-${{ matrix.arch }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-${{ matrix.arch }}-
+
+      - name: Verify Package.resolved is up-to-date
+        run: |
+          swift package resolve
+          if ! git diff --exit-code Package.resolved; then
+            echo "ERROR: Package.resolved is out of sync. Run 'swift package resolve' and commit."
+            exit 1
+          fi
+
       - name: Build
-        run: swift build -c release
+        run: swift build -c release --arch ${{ matrix.arch }}
 
       - name: Test
         run: swift test
+
+      - name: Verify binary
+        run: |
+          BIN_PATH=$(swift build -c release --arch ${{ matrix.arch }} --show-bin-path)
+          "$BIN_PATH/aerospace-focus" --help
+          "$BIN_PATH/aerospace-focus" --version
