@@ -13,24 +13,43 @@ struct AerospaceGaps {
 
 /// Floating app rules parsed from aerospace config
 struct FloatingAppRules {
-    var appIds: Set<String> = []           // Bundle IDs like "com.apple.finder"
-    var appNamePatterns: [String] = []      // Regex patterns for app names
-    var windowTitlePatterns: [String] = []  // Regex patterns for window titles
+    var appIds: Set<String> = []
+    private var appNamePatterns: [String] = []
+    private var compiledAppNameRegexes: [NSRegularExpression] = []
+    private var windowTitlePatterns: [String] = []
+    
+    /// Add an app name regex pattern, compiling it immediately
+    /// - Parameter pattern: Regex pattern string
+    mutating func addAppNamePattern(_ pattern: String) {
+        appNamePatterns.append(pattern)
+        do {
+            let regex = try NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+            compiledAppNameRegexes.append(regex)
+        } catch {
+            log("Invalid floating rule regex '\(pattern)': \(error.localizedDescription)")
+        }
+    }
+    
+    /// Add a window title regex pattern
+    /// - Parameter pattern: Regex pattern string
+    mutating func addWindowTitlePattern(_ pattern: String) {
+        windowTitlePatterns.append(pattern)
+    }
     
     /// Check if an app matches floating rules
+    /// - Parameters:
+    ///   - bundleId: Optional bundle identifier
+    ///   - appName: Application name
+    /// - Returns: true if the app matches any floating rule
     func isFloating(bundleId: String?, appName: String) -> Bool {
-        // Check bundle ID
         if let id = bundleId, appIds.contains(id) {
             return true
         }
         
-        // Check app name patterns
-        for pattern in appNamePatterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let range = NSRange(appName.startIndex..., in: appName)
-                if regex.firstMatch(in: appName, range: range) != nil {
-                    return true
-                }
+        let range = NSRange(appName.startIndex..., in: appName)
+        for regex in compiledAppNameRegexes {
+            if regex.firstMatch(in: appName, range: range) != nil {
+                return true
             }
         }
         
@@ -133,30 +152,8 @@ class ConfigManager {
     
     /// Load all aerospace-related config (gaps + floating rules)
     func loadAerospaceConfig() {
-        loadAerospaceGaps()
-        loadFloatingRules()
-    }
-    
-    var configDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config")
-            .appendingPathComponent("aerospace-focus")
-    }
-    
-    var configFile: URL {
-        configDirectory.appendingPathComponent("config.toml")
-    }
-    
-    var aerospaceConfigFile: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config")
-            .appendingPathComponent("aerospace")
-            .appendingPathComponent("aerospace.toml")
-    }
-    
-    /// Load gap configuration from Aerospace config
-    func loadAerospaceGaps() {
         let path = aerospaceConfigFile
+        floatingRules = FloatingAppRules()
         
         guard FileManager.default.fileExists(atPath: path.path) else {
             log("No aerospace config at \(path.path), using default gaps")
@@ -167,6 +164,7 @@ class ConfigManager {
             let contents = try String(contentsOf: path, encoding: .utf8)
             let toml = try TOMLTable(string: contents)
             
+            // Parse gaps
             if let gaps = toml["gaps"] as? TOMLTable {
                 if let inner = gaps["inner"] as? TOMLTable {
                     if let h = inner["horizontal"]?.int {
@@ -190,33 +188,13 @@ class ConfigManager {
                         aerospaceGaps.outerRight = CGFloat(right)
                     }
                 }
+                log("Loaded aerospace gaps: inner=\(aerospaceGaps.innerVertical), outer.bottom=\(aerospaceGaps.outerBottom)")
             }
             
-            log("Loaded aerospace gaps: inner=\(aerospaceGaps.innerVertical), outer.bottom=\(aerospaceGaps.outerBottom)")
-        } catch {
-            log("Failed to load aerospace config: \(error), using default gaps")
-        }
-    }
-    
-    /// Load floating app rules from Aerospace config
-    func loadFloatingRules() {
-        let path = aerospaceConfigFile
-        floatingRules = FloatingAppRules()  // Reset
-        
-        guard FileManager.default.fileExists(atPath: path.path) else {
-            return
-        }
-        
-        do {
-            let contents = try String(contentsOf: path, encoding: .utf8)
-            let toml = try TOMLTable(string: contents)
-            
-            // Parse [[on-window-detected]] array
+            // Parse floating rules from [[on-window-detected]]
             if let windowRules = toml["on-window-detected"] as? TOMLArray {
                 for item in windowRules {
                     guard let rule = item as? TOMLTable else { continue }
-                    
-                    // Check if this rule sets floating layout
                     guard let runCommands = rule["run"] as? TOMLArray else { continue }
                     let isFloatingRule = runCommands.contains { cmd in
                         if let str = cmd.string {
@@ -224,32 +202,51 @@ class ConfigManager {
                         }
                         return false
                     }
-                    
                     guard isFloatingRule else { continue }
                     
-                    // Extract the condition (if.app-id, if.app-name-regex-substring, etc.)
                     if let ifTable = rule["if"] as? TOMLTable {
                         if let appId = ifTable["app-id"]?.string {
                             floatingRules.appIds.insert(appId)
                             log("Floating rule: app-id = \(appId)")
                         }
                         if let appNameRegex = ifTable["app-name-regex-substring"]?.string {
-                            floatingRules.appNamePatterns.append(appNameRegex)
+                            floatingRules.addAppNamePattern(appNameRegex)
                             log("Floating rule: app-name-regex = \(appNameRegex)")
                         }
                         if let windowTitleRegex = ifTable["window-title-regex-substring"]?.string {
-                            floatingRules.windowTitlePatterns.append(windowTitleRegex)
+                            floatingRules.addWindowTitlePattern(windowTitleRegex)
                             log("Floating rule: window-title-regex = \(windowTitleRegex)")
                         }
                     }
                 }
             }
             
-            log("Loaded \(floatingRules.appIds.count) floating app IDs, \(floatingRules.appNamePatterns.count) app name patterns")
+            log("Loaded floating rules: \(floatingRules.appIds.count) app IDs")
         } catch {
-            log("Failed to parse floating rules: \(error)")
+            log("Failed to load aerospace config: \(error), using default gaps")
         }
     }
+    
+    var configDirectory: URL {
+        if let xdgConfig = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"] {
+            return URL(fileURLWithPath: xdgConfig).appendingPathComponent("aerospace-focus")
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config")
+            .appendingPathComponent("aerospace-focus")
+    }
+    
+    var configFile: URL {
+        configDirectory.appendingPathComponent("config.toml")
+    }
+    
+    var aerospaceConfigFile: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config")
+            .appendingPathComponent("aerospace")
+            .appendingPathComponent("aerospace.toml")
+    }
+
     
     func loadConfig() {
         let path = configFile
@@ -265,20 +262,20 @@ class ConfigManager {
             let toml = try TOMLTable(string: contents)
             
             if let barHeight = toml["bar_height"]?.double {
-                config.barHeight = CGFloat(barHeight)
+                config.barHeight = max(1, min(100, CGFloat(barHeight)))
             }
             if let barColor = toml["bar_color"]?.string {
                 config.barColor = barColor
             }
             if let barOpacity = toml["bar_opacity"]?.double {
-                config.barOpacity = barOpacity
+                config.barOpacity = max(0.0, min(1.0, barOpacity))
             }
             if let position = toml["position"]?.string,
                let pos = Config.BarPosition(rawValue: position) {
                 config.position = pos
             }
             if let offset = toml["offset"]?.double {
-                config.offset = CGFloat(offset)
+                config.offset = max(0, min(50, CGFloat(offset)))
             }
             if let includeApps = toml["include_apps"]?.array {
                 config.includeApps = includeApps.compactMap { $0.string }
@@ -293,7 +290,7 @@ class ConfigManager {
                 config.animate = animate
             }
             if let animDuration = toml["animation_duration"]?.double {
-                config.animationDuration = animDuration
+                config.animationDuration = max(0.01, min(2.0, animDuration))
             }
             if let autoSize = toml["auto_size_from_aerospace"]?.bool {
                 config.autoSizeFromAerospace = autoSize
@@ -338,8 +335,13 @@ class ConfigManager {
     }
 }
 
-/// Simple logging
+/// Simple logging to stderr
+private let logDateFormatter: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    return f
+}()
+
 func log(_ message: String) {
-    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let timestamp = logDateFormatter.string(from: Date())
     fputs("[\(timestamp)] \(message)\n", stderr)
 }
