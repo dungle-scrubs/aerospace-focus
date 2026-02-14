@@ -67,29 +67,39 @@ class FocusServer {
         while isRunning {
             let clientSocket = accept(serverSocket, nil, nil)
             guard clientSocket >= 0 else {
-                if isRunning {
-                    log("Accept failed: \(errno)")
-                }
+                if isRunning { log("Accept failed: \(errno)") }
                 continue
             }
             
-            // Read command
+            // Set read timeout on client socket (5 seconds)
+            var timeout = timeval(tv_sec: 5, tv_usec: 0)
+            setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            
             var buffer = [CChar](repeating: 0, count: 256)
             let bytesRead = read(clientSocket, &buffer, buffer.count - 1)
             
             if bytesRead > 0 {
                 let command = String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
-                handleCommand(command)
+                let response = handleCommand(command)
+                
+                // Send response back to client
+                _ = response.withCString { cstr in
+                    Darwin.write(clientSocket, cstr, strlen(cstr))
+                }
             }
             
             close(clientSocket)
         }
     }
     
-    private func handleCommand(_ command: String) {
+    private func handleCommand(_ command: String) -> String {
         let parts = command.split(separator: " ", maxSplits: 1)
         let cmd = String(parts.first ?? "")
         let arg = parts.count > 1 ? String(parts[1]) : nil
+        
+        // Dispatch to main thread and wait for completion
+        var response = "ok"
+        let semaphore = DispatchSemaphore(value: 0)
         
         DispatchQueue.main.async { [weak self] in
             switch cmd {
@@ -104,13 +114,24 @@ class FocusServer {
             case "color":
                 if let color = arg {
                     self?.onSetColor?(color)
+                } else {
+                    response = "error: missing color argument"
                 }
             case "quit":
                 self?.onQuit?()
             default:
+                response = "error: unknown command '\(command)'"
                 log("Unknown command: \(command)")
             }
+            semaphore.signal()
         }
+        
+        // Wait up to 2 seconds for main thread to process
+        if semaphore.wait(timeout: .now() + 2.0) == .timedOut {
+            return "error: command timed out"
+        }
+        
+        return response
     }
     
     func stop() {
@@ -161,6 +182,25 @@ class FocusClient {
     }
     
     static func isDaemonRunning() -> Bool {
-        return FileManager.default.fileExists(atPath: FocusServer.socketPath)
+        // Actually try to connect rather than just checking file existence
+        let testSocket = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard testSocket >= 0 else { return false }
+        defer { close(testSocket) }
+        
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutablePointer(to: &addr.sun_path.0) { ptr in
+            _ = FocusServer.socketPath.withCString { cstr in
+                strcpy(ptr, cstr)
+            }
+        }
+        
+        let result = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                connect(testSocket, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        
+        return result == 0
     }
 }

@@ -6,7 +6,7 @@ struct AerospaceFocus: ParsableCommand {
     static var configuration = CommandConfiguration(
         commandName: "aerospace-focus",
         abstract: "A focus indicator bar for Aerospace window manager",
-        version: "0.1.0",
+        version: "0.1.4",
         subcommands: [
             Daemon.self,
             Update.self,
@@ -47,10 +47,29 @@ struct Update: ParsableCommand {
     
     func run() throws {
         if FocusClient.send("update") {
-            // Success, daemon handled it
-        } else {
-            // Daemon not running, start it in background and then update
-            print("Daemon not running. Start it with: aerospace-focus daemon")
+            return
+        }
+        
+        // Daemon not running — try to auto-start it
+        let binaryPath = ProcessInfo.processInfo.arguments[0]
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binaryPath)
+        process.arguments = ["daemon"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        
+        do {
+            try process.run()
+        } catch {
+            print("Failed to auto-start daemon: \(error)")
+            throw ExitCode.failure
+        }
+        
+        // Wait briefly for daemon to initialize, then retry
+        Thread.sleep(forTimeInterval: 0.5)
+        
+        if !FocusClient.send("update") {
+            print("Daemon failed to start. Try manually: aerospace-focus daemon")
             throw ExitCode.failure
         }
     }
